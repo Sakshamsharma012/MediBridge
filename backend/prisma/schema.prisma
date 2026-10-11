@@ -1,0 +1,446 @@
+// Prisma Schema for MediBridge Platform
+// PostgreSQL Database Provider
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  DONOR
+  PHARMACY
+  NGO
+  HOSPITAL
+  ADMIN
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  EXPIRED
+  CONFLICT
+}
+
+enum DonationStatus {
+  SUBMITTED
+  PENDING_VERIFICATION
+  APPROVED
+  REJECTED
+  EXPIRED
+  ALLOCATED
+  COMPLETED
+}
+
+enum RequestStatus {
+  REQUESTED
+  UNDER_REVIEW
+  APPROVED
+  ALLOCATED
+  READY
+  COMPLETED
+  REJECTED
+}
+
+enum RequestPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  password     String
+  role         Role         @default(USER)
+  isVerified   Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  profile      UserProfile?
+  pharmacy     Pharmacy?
+  ngo          NGO?
+  hospital     Hospital?
+
+  donations    Donation[]   @relation("DonorUser")
+  approvedDonations Donation[] @relation("ApprovedByUser")
+  requests     MedicineRequest[]
+  orders       Order[]
+  notifications Notification[]
+  auditLogs    AuditLog[]
+
+  @@map("users")
+}
+
+model UserProfile {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName  String
+  phone     String?
+  address   String?
+  city      String?
+  state     String?
+  zipCode   String?
+  latitude  Float?
+  longitude Float?
+  avatar    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_profiles")
+}
+
+model Pharmacy {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  licenseNumber  String    @unique
+  address        String
+  city           String
+  state          String
+  zipCode        String
+  latitude       Float
+  longitude      Float
+  phone          String
+  isVerified     Boolean   @default(false)
+  openingHours   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  inventories    PharmacyInventory[]
+  orders         Order[]
+
+  @@map("pharmacies")
+}
+
+model NGO {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name               String
+  registrationNumber String   @unique
+  address            String
+  city               String
+  state              String
+  zipCode            String
+  latitude           Float
+  longitude          Float
+  phone              String
+  contactPerson      String
+  isVerified         Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("ngos")
+}
+
+model Hospital {
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name               String
+  registrationNumber String   @unique
+  address            String
+  city               String
+  state              String
+  zipCode            String
+  latitude           Float
+  longitude          Float
+  phone              String
+  hospitalType       String   @default("GENERAL") // GENERAL, SPECIALTY, CLINIC
+  isVerified         Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("hospitals")
+}
+
+model Medicine {
+  id                   String   @id @default(uuid())
+  name                 String
+  genericName          String
+  brandName            String?
+  dosage               String   // e.g. 500mg
+  dosageForm           String   // Tablet, Syrup, Injection, Capsule
+  strength             String   // 500 mg
+  manufacturer         String
+  category             String   // Analgesic, Antibiotic, Cardiac, Respiratory, etc.
+  prescriptionRequired Boolean  @default(false)
+  description          String?
+  activeIngredient     String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  batches              MedicineBatch[]
+  inventories          PharmacyInventory[]
+  requestItems         RequestItem[]
+  orderItems           OrderItem[]
+  genericAlternatives  GenericAlternative[] @relation("OriginalMedicine")
+
+  @@index([name])
+  @@index([genericName])
+  @@index([activeIngredient])
+  @@index([category])
+  @@map("medicines")
+}
+
+model MedicineBatch {
+  id                String             @id @default(uuid())
+  medicineId        String
+  medicine          Medicine           @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  batchNumber       String
+  manufacturingDate DateTime?
+  expiryDate        DateTime
+  storageConditions String?            // Cool & dry place, Refrigerated, etc.
+  barcode           String?
+  verificationStatus VerificationStatus @default(PENDING)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  donations         Donation[]
+  images            MedicineImage[]
+
+  @@index([batchNumber])
+  @@index([barcode])
+  @@index([expiryDate])
+  @@map("medicine_batches")
+}
+
+model MedicineImage {
+  id               String        @id @default(uuid())
+  medicineBatchId  String
+  medicineBatch    MedicineBatch @relation(fields: [medicineBatchId], references: [id], onDelete: Cascade)
+  imageUrl         String
+  originalFilename String
+  createdAt        DateTime      @default(now())
+
+  @@map("medicine_images")
+}
+
+model Donation {
+  id                 String               @id @default(uuid())
+  donorId            String
+  donor              User                 @relation("DonorUser", fields: [donorId], references: [id], onDelete: Cascade)
+  medicineBatchId    String
+  medicineBatch      MedicineBatch        @relation(fields: [medicineBatchId], references: [id], onDelete: Cascade)
+  quantity           Int
+  condition          String               // Sealed, Unopened, Original Packaging
+  storageCondition   String?
+  status             DonationStatus       @default(SUBMITTED)
+  verificationReason String?
+  pickupPreference   String               @default("SELF_DROP") // SELF_DROP, COURIER, PICKUP
+  submittedAt        DateTime             @default(now())
+  approvedById       String?
+  approvedBy         User?                @relation("ApprovedByUser", fields: [approvedById], references: [id])
+  approvedAt         DateTime?
+  updatedAt          DateTime             @updatedAt
+
+  verifications      DonationVerification[]
+
+  @@index([status])
+  @@map("donations")
+}
+
+model DonationVerification {
+  id              String             @id @default(uuid())
+  donationId      String
+  donation        Donation           @relation(fields: [donationId], references: [id], onDelete: Cascade)
+  ocrDataJson     String?            // JSON string containing extracted fields & raw OCR
+  barcodeScanned  String?
+  confidenceScore Float              @default(0.0)
+  status          VerificationStatus @default(PENDING)
+  checkedBy       String?
+  notes           String?
+  verifiedAt      DateTime           @default(now())
+
+  @@map("donation_verifications")
+}
+
+model MedicineRequest {
+  id          String          @id @default(uuid())
+  requesterId String
+  requester   User            @relation(fields: [requesterId], references: [id], onDelete: Cascade)
+  sourceType  String          @default("DONATION") // DONATION, NGO, PHARMACY
+  sourceId    String?
+  status      RequestStatus   @default(REQUESTED)
+  priority    RequestPriority @default(MEDIUM)
+  reason      String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  items       RequestItem[]
+
+  @@index([status])
+  @@map("medicine_requests")
+}
+
+model RequestItem {
+  id         String          @id @default(uuid())
+  requestId  String
+  request    MedicineRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  medicineId String
+  medicine   Medicine        @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  quantity   Int
+
+  @@map("request_items")
+}
+
+model PharmacyInventory {
+  id                   String   @id @default(uuid())
+  pharmacyId           String
+  pharmacy             Pharmacy @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
+  medicineId           String
+  medicine             Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  batchNumber          String
+  expiryDate           DateTime
+  quantity             Int
+  price                Float
+  prescriptionRequired Boolean  @default(false)
+  isAvailable          Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([pharmacyId])
+  @@index([medicineId])
+  @@map("pharmacy_inventories")
+}
+
+model Order {
+  id              String        @id @default(uuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pharmacyId      String
+  pharmacy        Pharmacy      @relation(fields: [pharmacyId], references: [id], onDelete: Cascade)
+  totalAmount     Float
+  status          OrderStatus   @default(PENDING)
+  paymentStatus   PaymentStatus @default(PENDING)
+  paymentMethod   String        @default("MOCK_CARD")
+  shippingAddress String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  items           OrderItem[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id           String   @id @default(uuid())
+  orderId      String
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  medicineId   String
+  medicine     Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  quantity     Int
+  pricePerUnit Float
+
+  @@map("order_items")
+}
+
+model GenericAlternative {
+  id                 String   @id @default(uuid())
+  originalMedicineId String
+  originalMedicine   Medicine @relation("OriginalMedicine", fields: [originalMedicineId], references: [id], onDelete: Cascade)
+  genericName        String
+  activeIngredient   String
+  strength           String
+  dosageForm         String
+  manufacturer       String
+  prescriptionStatus String   // PRESCRIPTION_REQUIRED, OTC
+  notes              String?
+  similarityScore    Float    @default(0.95)
+  createdAt          DateTime @default(now())
+
+  @@map("generic_alternatives")
+}
+
+model FirstAidContent {
+  id             String   @id @default(uuid())
+  title          String
+  category       String   // Minor Cuts, Burns, Fever, Dehydration, Sprains, Cold & Cough
+  summary        String
+  stepsJson      String   // JSON array of strings
+  avoidJson      String   // JSON array of strings
+  whenToSeekHelp String
+  emergencySigns String
+  published      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("first_aid_contents")
+}
+
+model SelfCareContent {
+  id              String   @id @default(uuid())
+  title           String
+  category        String   // Hydration, Sleep & Rest, Nutrition, Warm Fluids, Hygiene
+  summary         String
+  tipsJson        String   // JSON array of strings
+  precautionsJson String   // JSON array of strings
+  published       Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("self_care_contents")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  type      String   // DONATION, REQUEST, ORDER, SYSTEM, ALERT
+  isRead    Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action       String   // LOGIN, DONATION_APPROVED, REQUEST_CREATED, etc.
+  entity       String   // User, Donation, Order, Medicine
+  entityId     String?
+  metadataJson String?  // Additional details JSON
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_settings")
+}
